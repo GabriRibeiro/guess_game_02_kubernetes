@@ -112,11 +112,11 @@ spec:
     spec:
       initContainers:
         - name: wait-postgres
-          image: busybox:1.36
+          image: postgres:16-alpine
           command:
             - sh
             - -c
-            - until nc -z guess-postgres 5432; do echo waiting for postgres; sleep 2; done
+            - until pg_isready -h guess-postgres -p 5432 -U postgres; do echo waiting for postgres; sleep 2; done
       containers:
         - name: backend
           image: "gabribeiro/guess-backend:1.0.0"
