@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: guess-backend-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: guess-backend
+data:
+  FLASK_DB_TYPE: "postgres"
+  FLASK_DB_HOST: "guess-postgres"
+  FLASK_DB_PORT: "5432"
+  FLASK_DB_NAME: {{ .Values.postgres.db | quote }}
+  FLASK_DB_USER: {{ .Values.postgres.user | quote }}

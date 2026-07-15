@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: guess-backend
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: guess-backend
+spec:
+  selector:
+    app: guess-backend
+  ports:
+    - port: 5000
+      targetPort: 5000
+  type: ClusterIP

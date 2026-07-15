@@ -1,0 +1,276 @@
+---
+# Source: guess-game/templates/postgres-secret.yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: guess-postgres
+  namespace: guess-game
+  labels:
+    app: guess-postgres
+type: Opaque
+stringData:
+  POSTGRES_USER: "postgres"
+  POSTGRES_PASSWORD: "secretpass"
+  POSTGRES_DB: "postgres"
+---
+# Source: guess-game/templates/backend-configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: guess-backend-config
+  namespace: guess-game
+  labels:
+    app: guess-backend
+data:
+  FLASK_DB_TYPE: "postgres"
+  FLASK_DB_HOST: "guess-postgres"
+  FLASK_DB_PORT: "5432"
+  FLASK_DB_NAME: "postgres"
+  FLASK_DB_USER: "postgres"
+---
+# Source: guess-game/templates/postgres-pvc.yaml
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: guess-postgres-data
+  namespace: guess-game
+  labels:
+    app: guess-postgres
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+---
+# Source: guess-game/templates/backend-service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: guess-backend
+  namespace: guess-game
+  labels:
+    app: guess-backend
+spec:
+  selector:
+    app: guess-backend
+  ports:
+    - port: 5000
+      targetPort: 5000
+  type: ClusterIP
+---
+# Source: guess-game/templates/frontend-service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: guess-frontend
+  namespace: guess-game
+  labels:
+    app: guess-frontend
+spec:
+  selector:
+    app: guess-frontend
+  ports:
+    - port: 80
+      targetPort: 80
+      nodePort: 30080
+  type: NodePort
+---
+# Source: guess-game/templates/postgres-service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: guess-postgres
+  namespace: guess-game
+  labels:
+    app: guess-postgres
+spec:
+  selector:
+    app: guess-postgres
+  ports:
+    - port: 5432
+      targetPort: 5432
+  type: ClusterIP
+---
+# Source: guess-game/templates/backend-deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: guess-backend
+  namespace: guess-game
+  labels:
+    app: guess-backend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: guess-backend
+  template:
+    metadata:
+      labels:
+        app: guess-backend
+    spec:
+      initContainers:
+        - name: wait-postgres
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - until nc -z guess-postgres 5432; do echo waiting for postgres; sleep 2; done
+      containers:
+        - name: backend
+          image: "gabribeiro/guess-backend:1.0.0"
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 5000
+          envFrom:
+            - configMapRef:
+                name: guess-backend-config
+          env:
+            - name: FLASK_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: guess-postgres
+                  key: POSTGRES_PASSWORD
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 5000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 5000
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          resources:
+            limits:
+              cpu: 500m
+              memory: 256Mi
+            requests:
+              cpu: 100m
+              memory: 128Mi
+---
+# Source: guess-game/templates/frontend-deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: guess-frontend
+  namespace: guess-game
+  labels:
+    app: guess-frontend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: guess-frontend
+  template:
+    metadata:
+      labels:
+        app: guess-frontend
+    spec:
+      containers:
+        - name: frontend
+          image: "gabribeiro/guess-frontend:1.0.0"
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 80
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 80
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 80
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          resources:
+            limits:
+              cpu: 200m
+              memory: 128Mi
+            requests:
+              cpu: 50m
+              memory: 32Mi
+---
+# Source: guess-game/templates/postgres-deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: guess-postgres
+  namespace: guess-game
+  labels:
+    app: guess-postgres
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: guess-postgres
+  template:
+    metadata:
+      labels:
+        app: guess-postgres
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          ports:
+            - containerPort: 5432
+          envFrom:
+            - secretRef:
+                name: guess-postgres
+          env:
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "postgres"]
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", "postgres"]
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          resources:
+            limits:
+              cpu: 500m
+              memory: 256Mi
+            requests:
+              cpu: 100m
+              memory: 128Mi
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: guess-postgres-data
+---
+# Source: guess-game/templates/backend-hpa.yaml
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: guess-backend
+  namespace: guess-game
+  labels:
+    app: guess-backend
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: guess-backend
+  minReplicas: 2
+  maxReplicas: 6
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 60
